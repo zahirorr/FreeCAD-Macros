@@ -1,0 +1,304 @@
+import FreeCAD
+import FreeCADGui
+import Part
+import Draft
+from PySide6 import QtWidgets
+
+
+PREFIX = "SP_"
+
+
+def find_nearest_node(point, nodes):
+    min_dist = float("inf")
+    nearest_id = None
+    for nid, coord in nodes.items():
+        dist = coord.distanceToPoint(point)
+        if dist < min_dist:
+            min_dist = dist
+            nearest_id = nid
+    return nearest_id, min_dist
+
+
+def get_point_from_selection():
+    sel = FreeCADGui.Selection.getSelectionEx()
+    if not sel:
+        return None
+    for s in sel:
+        for sub in s.SubElementNames:
+            if "Vertex" in sub:
+                vi = int(sub.replace("Vertex", "")) - 1
+                if vi < len(s.Object.Shape.Vertexes):
+                    return s.Object.Shape.Vertexes[vi].Point
+            elif "Face" in sub:
+                fi = int(sub.replace("Face", "")) - 1
+                if fi < len(s.Object.Shape.Faces):
+                    return s.Object.Shape.Faces[fi].CenterOfGravity
+            elif "Edge" in sub:
+                ei = int(sub.replace("Edge", "")) - 1
+                if ei < len(s.Object.Shape.Edges):
+                    return s.Object.Shape.Edges[ei].CenterOfGravity
+    return None
+
+
+def get_fem_result():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        return None
+    for obj in doc.Objects:
+        if obj.TypeId in ("Fem::FemResultObject", "Fem::FemResultObjectPython"):
+            return obj
+    return None
+
+
+GROUP_NAME = "StressProbe"
+
+
+def cleanup():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        return 0
+    grp = doc.getObject(GROUP_NAME)
+    count = 0
+    if grp:
+        names = [o.Name for o in grp.Group]
+        for name in names:
+            doc.removeObject(name)
+        count = len(names)
+        doc.removeObject(GROUP_NAME)
+    to_remove = [o.Name for o in doc.Objects if o.Name.startswith(PREFIX)]
+    for name in to_remove:
+        doc.removeObject(name)
+    count += len(to_remove)
+    if count:
+        doc.recompute()
+    return count
+
+
+def cleanup_old():
+    doc = FreeCAD.ActiveDocument
+    if doc is None:
+        return 0
+    to_remove = [o.Name for o in doc.Objects if o.Name.startswith("StressProbe") or o.Name.startswith("StressLeader")]
+    for name in to_remove:
+        doc.removeObject(name)
+    if to_remove:
+        doc.recompute()
+    return len(to_remove)
+
+
+def get_or_create_group():
+    doc = FreeCAD.ActiveDocument
+    grp = doc.getObject(GROUP_NAME)
+    if grp is None:
+        grp = doc.addObject("App::DocumentObjectGroup", GROUP_NAME)
+    return grp
+
+
+def make_marker(point, label, size=0.4):
+    doc = FreeCAD.ActiveDocument
+    sphere = doc.addObject("Part::Sphere", label)
+    sphere.Radius = size
+    sphere.Placement.Base = point
+    grp = get_or_create_group()
+    grp.addObject(sphere)
+    return sphere
+
+
+def make_text_label(point, lines, label):
+    doc = FreeCAD.ActiveDocument
+    text_point = FreeCAD.Vector(point.x + 2.0, point.y + 1.5, point.z)
+    pl = FreeCAD.Placement()
+    pl.Base = text_point
+    txt = Draft.make_text(lines, placement=pl, screen=False, height=3.0)
+    txt.Label = label
+    leader = doc.addObject("Part::Feature", label + "_leader")
+    leader.Shape = Part.makeLine(point, text_point)
+    grp = get_or_create_group()
+    grp.addObject(txt)
+    grp.addObject(leader)
+    return txt
+
+
+class StressProbeTaskPanel:
+    def __init__(self):
+        self.form = QtWidgets.QWidget()
+        self.form.setWindowTitle("Stress Probe")
+        self.form.setMinimumWidth(450)
+        self.form.setMinimumHeight(500)
+
+        layout = QtWidgets.QVBoxLayout(self.form)
+
+        self.info = QtWidgets.QLabel(
+            "1. Select a vertex, edge, or face\n"
+            "2. Click Probe\n"
+            "Shows probed point + body max/min"
+        )
+        self.info.setStyleSheet("color: #555; padding: 5px;")
+        layout.addWidget(self.info)
+
+        self.status = QtWidgets.QLabel("Ready")
+        self.status.setStyleSheet("color: green; font-weight: bold; padding: 5px;")
+        layout.addWidget(self.status)
+
+        self.result_text = QtWidgets.QTextEdit()
+        self.result_text.setReadOnly(True)
+        self.result_text.setPlaceholderText("Stress results appear here...")
+        self.result_text.setStyleSheet("font-family: Consolas, monospace; font-size: 12px;")
+        layout.addWidget(self.result_text)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+
+        self.btn_probe = QtWidgets.QPushButton("Probe")
+        self.btn_probe.setStyleSheet("font-weight: bold; padding: 10px; font-size: 14px;")
+        self.btn_probe.clicked.connect(self.do_probe)
+        btn_layout.addWidget(self.btn_probe)
+
+        self.btn_remove = QtWidgets.QPushButton("Remove All")
+        self.btn_remove.setStyleSheet("padding: 10px; font-size: 14px;")
+        self.btn_remove.clicked.connect(self.do_remove)
+        btn_layout.addWidget(self.btn_remove)
+
+        layout.addLayout(btn_layout)
+
+    def do_probe(self):
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            self.status.setText("No active document")
+            self.status.setStyleSheet("color: red; font-weight: bold;")
+            return
+
+        result = get_fem_result()
+        if result is None:
+            self.status.setText("No FEM result found")
+            self.status.setStyleSheet("color: red; font-weight: bold;")
+            return
+
+        point = get_point_from_selection()
+        if point is None:
+            self.status.setText("Select a vertex/edge/face first")
+            self.status.setStyleSheet("color: orange; font-weight: bold;")
+            return
+
+        nodes = result.Mesh.FemMesh.Nodes
+        node_numbers = result.NodeNumbers
+        index_map = {num: i for i, num in enumerate(node_numbers)}
+
+        nearest_id, min_dist = find_nearest_node(point, nodes)
+        idx = index_map[nearest_id]
+        coord = nodes[nearest_id]
+
+        vm = result.vonMises[idx]
+        smax = result.PrincipalMax[idx]
+        smin = result.PrincipalMin[idx]
+        mshear = result.MaxShear[idx]
+        disp = result.DisplacementLengths[idx]
+
+        vm_arr = list(result.vonMises)
+        smax_arr = list(result.PrincipalMax)
+        smin_arr = list(result.PrincipalMin)
+        mshear_arr = list(result.MaxShear)
+        disp_arr = list(result.DisplacementLengths)
+
+        max_vm_idx = vm_arr.index(max(vm_arr))
+        min_vm_idx = vm_arr.index(min(vm_arr))
+        max_smax_idx = smax_arr.index(max(smax_arr))
+        min_smin_idx = smin_arr.index(min(smin_arr))
+        max_shear_idx = mshear_arr.index(max(mshear_arr))
+        max_disp_idx = disp_arr.index(max(disp_arr))
+
+        cleanup()
+        cleanup_old()
+
+        make_marker(coord, PREFIX + "Probe")
+        make_text_label(coord, [
+            "Node {}".format(nearest_id),
+            "vonMises: {:.3f} MPa".format(vm),
+            "Sig1: {:.3f} MPa".format(smax),
+            "Sig3: {:.3f} MPa".format(smin),
+            "MaxShear: {:.3f} MPa".format(mshear),
+            "Disp: {:.6f} mm".format(disp),
+        ], PREFIX + "ProbeText")
+
+        max_vm_coord = nodes[node_numbers[max_vm_idx]]
+        make_marker(max_vm_coord, PREFIX + "MaxVM")
+        make_text_label(max_vm_coord, [
+            "MAX vonMises {:.3f} MPa".format(max(vm_arr)),
+            "Node {}".format(node_numbers[max_vm_idx]),
+        ], PREFIX + "MaxVMText")
+
+        min_vm_coord = nodes[node_numbers[min_vm_idx]]
+        make_marker(min_vm_coord, PREFIX + "MinVM")
+        make_text_label(min_vm_coord, [
+            "MIN vonMises {:.3f} MPa".format(min(vm_arr)),
+            "Node {}".format(node_numbers[min_vm_idx]),
+        ], PREFIX + "MinVMText")
+
+        max_disp_coord = nodes[node_numbers[max_disp_idx]]
+        make_marker(max_disp_coord, PREFIX + "MaxDisp")
+        make_text_label(max_disp_coord, [
+            "MAX Disp {:.6f} mm".format(max(disp_arr)),
+            "Node {}".format(node_numbers[max_disp_idx]),
+        ], PREFIX + "MaxDispText")
+
+        min_disp_idx = disp_arr.index(min(disp_arr))
+        min_disp_coord = nodes[node_numbers[min_disp_idx]]
+        make_marker(min_disp_coord, PREFIX + "MinDisp")
+        make_text_label(min_disp_coord, [
+            "MIN Disp {:.6f} mm".format(min(disp_arr)),
+            "Node {}".format(node_numbers[min_disp_idx]),
+        ], PREFIX + "MinDispText")
+
+        doc.recompute()
+
+        self.status.setText("Probed Node {} | Max VM: {:.3f} | Min VM: {:.3f}".format(
+            nearest_id, max(vm_arr), min(vm_arr)))
+        self.status.setStyleSheet("color: green; font-weight: bold;")
+
+        self.result_text.setPlainText(
+            "=== PROBED POINT ===\n"
+            "  Node:         {}  (dist: {:.4f} mm)\n"
+            "  Position:     ({:.4f}, {:.4f}, {:.4f})\n"
+            "  von Mises:    {:.4f} MPa\n"
+            "  Sig1:         {:.4f} MPa\n"
+            "  Sig3:         {:.4f} MPa\n"
+            "  Max Shear:    {:.4f} MPa\n"
+            "  Displacement: {:.6f} mm\n"
+            "\n"
+            "=== BODY MAX / MIN ===\n"
+            "                    MAX              MIN\n"
+            "  von Mises:  {:>10.4f} MPa  {:>10.4f} MPa\n"
+            "  Sig1:       {:>10.4f} MPa  {:>10.4f} MPa\n"
+            "  Sig3:       {:>10.4f} MPa  {:>10.4f} MPa\n"
+            "  Max Shear:  {:>10.4f} MPa  {:>10.4f} MPa\n"
+            "  Disp:       {:>10.6f} mm   {:>10.6f} mm\n"
+            "\n"
+            "  Total nodes: {}".format(
+                nearest_id, min_dist, coord.x, coord.y, coord.z,
+                vm, smax, smin, mshear, disp,
+                max(vm_arr), min(vm_arr),
+                max(smax_arr), min(smax_arr),
+                max(smin_arr), min(smin_arr),
+                max(mshear_arr), min(mshear_arr),
+                max(disp_arr), min(disp_arr),
+                len(node_numbers),
+            )
+        )
+
+    def do_remove(self):
+        n1 = cleanup()
+        n2 = cleanup_old()
+        total = n1 + n2
+        self.status.setText("Removed {} marker(s)".format(total))
+        self.status.setStyleSheet("color: gray; font-weight: bold;")
+        self.result_text.clear()
+
+    def accept(self):
+        FreeCADGui.Control.closeDialog()
+
+    def reject(self):
+        FreeCADGui.Control.closeDialog()
+
+
+cleanup_old()
+cleanup()
+FreeCADGui.Control.showDialog(StressProbeTaskPanel())
