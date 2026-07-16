@@ -1,0 +1,223 @@
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+import math
+from PySide import QtGui, QtCore
+
+class SectionPropertiesDialog(QtGui.QDialog):
+    def __init__(self, face_data):
+        super(SectionPropertiesDialog, self).__init__()
+        self.face_data = face_data
+        self.init_ui()
+        
+    def init_ui(self):
+        self.setWindowTitle("Centroidal Section Properties")
+        self.setMinimumSize(600, 780)
+        
+        layout = QtGui.QVBoxLayout()
+        
+        # --- Settings Layout (Units & Decimals) ---
+        settings_layout = QtGui.QHBoxLayout()
+        
+        unit_label = QtGui.QLabel("<b>Unit:</b> ")
+        self.unit_combo = QtGui.QComboBox()
+        self.unit_combo.addItems(["Millimeters (mm)", "Centimeters (cm)", "Meters (m)"])
+        self.unit_combo.currentIndexChanged.connect(self.update_display)
+        settings_layout.addWidget(unit_label)
+        settings_layout.addWidget(self.unit_combo)
+        
+        settings_layout.addSpacing(20)
+        
+        decimals_label = QtGui.QLabel("<b>Decimals:</b> ")
+        self.decimals_spin = QtGui.QSpinBox()
+        self.decimals_spin.setRange(0, 10)
+        self.decimals_spin.setValue(2)
+        self.decimals_spin.valueChanged.connect(self.update_display)
+        settings_layout.addWidget(decimals_label)
+        settings_layout.addWidget(self.decimals_spin)
+        
+        settings_layout.addStretch()
+        layout.addLayout(settings_layout)
+        
+        # --- Text Display Field ---
+        self.text_edit = QtGui.QTextEdit()
+        self.text_edit.setReadOnly(True)
+        layout.addWidget(self.text_edit)
+        
+        # --- Creation Options (Checkboxes) ---
+        options_group = QtGui.QGroupBox("Geometry Creation Options")
+        options_layout = QtGui.QVBoxLayout()
+        
+        self.checkbox_datum = QtGui.QCheckBox("Create a Datum Point at Centroid")
+        self.checkbox_lcs = QtGui.QCheckBox("Create Local Coordinate System (LCS) (Z = Normal)")
+        self.checkbox_lcs.setChecked(True)
+        
+        options_layout.addWidget(self.checkbox_datum)
+        options_layout.addWidget(self.checkbox_lcs)
+        options_group.setLayout(options_layout)
+        layout.addWidget(options_group)
+        
+        # --- Copy to Clipboard Button ---
+        self.copy_button = QtGui.QPushButton("Copy Data to Clipboard")
+        self.copy_button.clicked.connect(self.copy_to_clipboard)
+        layout.addWidget(self.copy_button)
+        
+        # --- OK / Cancel Buttons ---
+        self.button_box = QtGui.QDialogButtonBox(QtGui.QDialogButtonBox.Ok | QtGui.QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.on_accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+        
+        self.setLayout(layout)
+        self.update_display()
+        
+    def update_display(self):
+        unit_idx = self.unit_combo.currentIndex()
+        prec = self.decimals_spin.value()
+        
+        if unit_idx == 0:  # mm
+            u_len, u_area, u_inertia = "mm", "mm²", "mm⁴"
+            f_len, f_area, f_inertia = 1.0, 1.0, 1.0
+        elif unit_idx == 1:  # cm
+            u_len, u_area, u_inertia = "cm", "cm²", "cm⁴"
+            f_len, f_area, f_inertia = 0.1, 0.01, 0.0001
+        else:  # m
+            u_len, u_area, u_inertia = "m", "m²", "m⁴"
+            f_len, f_area, f_inertia = 0.001, 1e-6, 1e-12
+
+        area = self.face_data['area'] * f_area
+        cx, cy, cz = self.face_data['cx'] * f_len, self.face_data['cy'] * f_len, self.face_data['cz'] * f_len
+        m_flat = self.face_data['local_matrix_flat']
+        
+        # Safe flat array indices mapped from standard FreeCAD Matrix layout:
+        # A[0]=Ixx, A[1]=Ixy, A[2]=Ixz
+        # A[4]=Iyx, A[5]=Iyy, A[6]=Iyz
+        # A[8]=Izx, A[9]=Izy, A[10]=Izz
+        ixx_raw = m_flat[0]
+        ixy_raw = m_flat[1]
+        ixz_raw = m_flat[2]
+        iyx_raw = m_flat[4]
+        iyy_raw = m_flat[5]
+        iyz_raw = m_flat[6]
+        izx_raw = m_flat[8]
+        izy_raw = m_flat[9]
+        izz_raw = m_flat[10]
+        
+        # --- CALCULATE 2D PRINCIPAL MOMENTS OF INERTIA (Ix, Iy) ---
+        avg = (ixx_raw + iyy_raw) / 2.0
+        diff = (ixx_raw - iyy_raw) / 2.0
+        radius = math.sqrt(diff**2 + ixy_raw**2)
+        
+        ix = (avg - radius) * f_inertia
+        iy = (avg + radius) * f_inertia
+        
+        fmt = f"{{:.{prec}f}}" 
+
+        text =  f"<h2>Centroidal Section Properties</h2>"
+        text += f"<hr>"
+        
+        text += f"<h3>1. Surface Area</h3>"
+        text += f"<b>Area:</b> {fmt.format(area)} {u_area}<br><br>"
+        
+        text += f"<h3>2. Centroid (Global Coordinates)</h3>"
+        text += f"<b>X:</b> {fmt.format(cx)} {u_len}<br>"
+        text += f"<b>Y:</b> {fmt.format(cy)} {u_len}<br>"
+        text += f"<b>Z:</b> {fmt.format(cz)} {u_len}<br><br>"
+        
+        # --- PRINCIPAL MOMENTS OF INERTIA (Translated to English) ---
+        text += f"<h3>3. Principal Moments of Inertia of the Face at Centroid</h3>"
+        text += f"<div style='background-color:#ebf5fb; padding:10px; border-left:4px solid #3498db; font-family:monospace; font-size:14px;'>"
+        text += f"  <b>Ix:</b> {fmt.format(ix)} {u_inertia}<br>"
+        text += f"  <b>Iy:</b> {fmt.format(iy)} {u_inertia}"
+        text += f"</div><br>"
+        
+        text += f"<h3>4. Moments of Inertia Tensor (Local Centroid CS)</h3>"
+        text += f"<table border='0' cellpadding='4' cellspacing='2' style='font-family:monospace; background-color:#f4f6f7; width:100%'>"
+        text += f"  <tr style='background-color:#e5e8e8;'><td><b>Ixx:</b> {fmt.format(ixx_raw*f_inertia)} {u_inertia}</td><td><b>Ixy:</b> {fmt.format(ixy_raw*f_inertia)} {u_inertia}</td><td><b>Ixz:</b> {fmt.format(ixz_raw*f_inertia)} {u_inertia}</td></tr>"
+        text += f"  <tr style='background-color:#f2f4f4;'><td><b>Iyx:</b> {fmt.format(iyx_raw*f_inertia)} {u_inertia}</td><td><b>Iyy:</b> {fmt.format(iyy_raw*f_inertia)} {u_inertia}</td><td><b>Iyz:</b> {fmt.format(iyz_raw*f_inertia)} {u_inertia}</td></tr>"
+        text += f"  <tr style='background-color:#e5e8e8;'><td><b>Izx:</b> {fmt.format(izx_raw*f_inertia)} {u_inertia}</td><td><b>Izy:</b> {fmt.format(izy_raw*f_inertia)} {u_inertia}</td><td><b>Izz:</b> {fmt.format(izz_raw*f_inertia)} {u_inertia}</td></tr>"
+        text += f"</table><br>"
+        
+        # --- EXPLANATIONS SECTION ---
+        text += f"<b>💡 How to read these values:</b>"
+        text += f"<ul style='margin-top: 5px; line-height: 1.45;'>"
+        text += f"  <li><b>Ixx, Iyy, Izz (The Diagonal values):</b> These represent Bending Stiffness. The larger the number, the more resistant the shape is to bending forces around that axis.</li>"
+        text += f"  <li><b>Ixx</b> resists bending around the local X-axis.</li>"
+        text += f"  <li><b>Iyy</b> resists bending around the local Y-axis.</li>"
+        text += f"  <li><b>Izz</b> is the polar moment of inertia, representing resistance to twisting (torsion).</li>"
+        text += f"  <li><b>Ixy, Ixz, Iyz (The Off-Diagonal values):</b> These are Products of Inertia. They measure asymmetry. If they are exactly 0.00, it means the shape is perfectly symmetric along those axes. If they are not zero, the shape will twist slightly when you try to bend it.</li>"
+        text += f"</ul>"
+        
+        self.text_edit.setHtml(text)
+        self.copy_button.setText("Copy Data to Clipboard")
+
+    def copy_to_clipboard(self):
+        clipboard = QtGui.QApplication.clipboard()
+        clipboard.setText(self.text_edit.toPlainText())
+        self.copy_button.setText("Copied Successfully!")
+
+    def on_accept(self):
+        doc = App.ActiveDocument
+        if doc:
+            raw_center = App.Vector(self.face_data['cx'], self.face_data['cy'], self.face_data['cz'])
+            face_rotation = App.Rotation(App.Vector(0, 0, 1), self.face_data['normal'])
+            
+            if self.checkbox_datum.isChecked():
+                datum = doc.addObject("Part::DatumPoint", "Centroid_DatumPoint")
+                datum.Placement = App.Placement(raw_center, App.Rotation(0,0,0))
+            
+            if self.checkbox_lcs.isChecked():
+                lcs = doc.addObject("Part::LocalCoordinateSystem", "Centroid_LCS")
+                lcs.Placement = App.Placement(raw_center, face_rotation)
+                lcs.Visibility = True
+                
+            doc.recompute()
+        self.accept()
+
+def get_face_properties():
+    selection = Gui.Selection.getSelectionEx()
+    if not selection or not selection[0].SubObjects:
+        QtGui.QMessageBox.warning(None, "Error", "Please select a face first!")
+        return
+
+    sub_obj = selection[0].SubObjects[0]
+    if sub_obj.ShapeType != "Face":
+        QtGui.QMessageBox.warning(None, "Error", "The selected element is not a face!")
+        return
+
+    face = sub_obj
+    
+    # Extract geometric attributes safely
+    u_start, u_end, v_start, v_end = face.ParameterRange
+    u_mid = (u_start + u_end) / 2.0
+    v_mid = (v_start + v_end) / 2.0
+    face_normal = face.normalAt(u_mid, v_mid)
+    
+    center = face.CenterOfMass
+
+    # Setup the local coordinate system alignment
+    face_rotation = App.Rotation(App.Vector(0, 0, 1), face_normal)
+    lcs_placement = App.Placement(center, face_rotation)
+
+    # Transform the face copy to local coordinates
+    local_face = face.copy()
+    inverse_matrix = lcs_placement.toMatrix().inverse()
+    local_face.transformShape(inverse_matrix)
+    
+    # Extract matrix safely
+    local_matrix_flat = local_face.MatrixOfInertia.A
+
+    face_data = {
+        'area': face.Area,
+        'cx': center.x,
+        'cy': center.y,
+        'cz': center.z,
+        'local_matrix_flat': local_matrix_flat, 
+        'normal': face_normal
+    }
+
+    dialog = SectionPropertiesDialog(face_data)
+    dialog.exec_()
+
+# Run macro
+get_face_properties()
