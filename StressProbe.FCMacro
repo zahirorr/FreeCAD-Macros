@@ -301,7 +301,7 @@ class StressProbeTaskPanel:
         self.info = QtWidgets.QLabel(
             "1. Select a vertex, edge, or face (optional)\n"
             "2. Click Probe\n"
-            "3. Click Export TXT to save results"
+            "Each Probe = new Condition folder with TXT"
         )
         self.info.setStyleSheet("color: #555; padding: 5px;")
         layout.addWidget(self.info)
@@ -335,15 +335,6 @@ class StressProbeTaskPanel:
         btn_layout.addWidget(self.btn_help)
 
         layout.addLayout(btn_layout)
-
-        btn_layout2 = QtWidgets.QHBoxLayout()
-
-        self.btn_export = QtWidgets.QPushButton("Export TXT")
-        self.btn_export.setStyleSheet("padding: 8px; font-size: 12px;")
-        self.btn_export.clicked.connect(self.do_export)
-        btn_layout2.addWidget(self.btn_export)
-
-        layout.addLayout(btn_layout2)
 
         offset_group = QtWidgets.QGroupBox("Label Offset")
         offset_layout = QtWidgets.QHBoxLayout(offset_group)
@@ -519,55 +510,6 @@ class StressProbeTaskPanel:
 
         doc.recompute()
 
-    def do_remove(self):
-        n1 = cleanup()
-        n2 = cleanup_old()
-        total = n1 + n2
-        self.status.setText("Removed {} marker(s)".format(total))
-        self.status.setStyleSheet("color: gray; font-weight: bold;")
-        self.result_text.clear()
-
-    def do_help(self):
-        QtWidgets.QMessageBox.information(self.form, "Stress Probe Help",
-            "STRESS PROBE MACRO\n\n"
-            "HOW TO USE:\n"
-            "  1. Run: Macro > Macros > StressProbe > Run\n"
-            "  2. Select a vertex, edge, or face (optional)\n"
-            "  3. Click 'Probe' to show max/min markers\n"
-            "  4. Click 'Export TXT' to save results\n\n"
-            "WHAT IT SHOWS:\n"
-            "  - Red spheres: max values on the body\n"
-            "  - Blue spheres: min values on the body\n"
-            "  - Green sphere: probed point (if selected)\n\n"
-            "LABEL OFFSET:\n"
-            "  Adjust X, Y, Z spin boxes before probing to\n"
-            "  change where the text labels appear.\n\n"
-            "EXPORT TXT:\n"
-            "  Each click of 'Export TXT' saves results in\n"
-            "  a separate folder: Condition 1, Condition 2...\n"
-            "  Each folder has its own TXT with force values\n"
-            "  and stress results for easy comparison.\n\n"
-            "AFTER CLOSING:\n"
-            "  - Labels and markers remain in the StressProbe group\n"
-            "  - To move a label: select it > right-click > Transform\n"
-            "  - Or edit Placement > Position in the Property panel\n\n"
-            "REQUIREMENTS:\n"
-            "  - FEM analysis with results (CCX_Results) must exist\n"
-        )
-
-    def do_export(self):
-        doc = FreeCAD.ActiveDocument
-        if doc is None:
-            self.status.setText("No active document")
-            self.status.setStyleSheet("color: red; font-weight: bold;")
-            return
-
-        text = self.result_text.toPlainText()
-        if not text.strip():
-            self.status.setText("No results to export. Probe first.")
-            self.status.setStyleSheet("color: orange; font-weight: bold;")
-            return
-
         cond_num = next_condition_number()
         cond_label = "Condition {}".format(cond_num)
         cond_folder = PREFIX + cond_label.replace(" ", "_")
@@ -581,7 +523,7 @@ class StressProbeTaskPanel:
         full_text += conds_text + "\n\n"
         full_text += "STRESS RESULTS\n"
         full_text += "-" * 50 + "\n\n"
-        full_text += text
+        full_text += self.result_text.toPlainText()
         full_text += "\n\n" + "=" * 50 + "\n"
         full_text += "Exported by StressProbe macro\n"
 
@@ -596,25 +538,47 @@ class StressProbeTaskPanel:
                 grp.addObject(obj)
             doc.removeObject(live_grp.Name)
 
-        for obj in list(doc.Objects):
-            if obj.Name.startswith(PREFIX) and obj != grp and obj != txt_obj:
-                if obj.TypeId == "App::DocumentObjectGroup" and obj.Name.startswith(PREFIX + "Condition"):
-                    continue
-                in_condition = False
-                for cg in doc.Objects:
-                    if cg.TypeId == "App::DocumentObjectGroup" and cg.Name.startswith(PREFIX + "Condition"):
-                        if obj in cg.Group:
-                            in_condition = True
-                            break
-                if not in_condition:
-                    try:
-                        grp.addObject(obj)
-                    except Exception:
-                        pass
-
         doc.recompute()
-        self.status.setText("Exported as {}".format(cond_label))
+
+        self.status.setText("Saved as {}".format(cond_label))
         self.status.setStyleSheet("color: green; font-weight: bold;")
+
+    def do_remove(self):
+        n1 = cleanup()
+        n2 = cleanup_old()
+        total = n1 + n2
+        self.status.setText("Removed {} marker(s)".format(total))
+        self.status.setStyleSheet("color: gray; font-weight: bold;")
+        self.result_text.clear()
+
+    def do_help(self):
+        QtWidgets.QMessageBox.information(self.form, "Stress Probe Help",
+            "STRESS PROBE MACRO\n\n"
+            "HOW TO USE:\n"
+            "  1. Run: Macro > Macros > StressProbe > Run\n"
+            "  2. Select a vertex, edge, or face (optional)\n"
+            "  3. Click 'Probe' — results saved automatically\n"
+            "  4. Change force/load, click 'Probe' again\n"
+            "     — new Condition folder created\n\n"
+            "WHAT IT SHOWS:\n"
+            "  - Red spheres: max values on the body\n"
+            "  - Blue spheres: min values on the body\n"
+            "  - Green sphere: probed point (if selected)\n\n"
+            "LABEL OFFSET:\n"
+            "  Adjust X, Y, Z spin boxes before probing to\n"
+            "  change where the text labels appear.\n\n"
+            "CONDITIONS:\n"
+            "  Each Probe creates a Condition folder:\n"
+            "  Condition 1, Condition 2, etc.\n"
+            "  Each has its own TXT with force values\n"
+            "  and stress results for easy comparison.\n\n"
+            "AFTER CLOSING:\n"
+            "  - All condition folders remain in the document\n"
+            "  - To move a label: select it > right-click > Transform\n"
+            "  - Or edit Placement > Position in the Property panel\n\n"
+            "REQUIREMENTS:\n"
+            "  - FEM analysis with results (CCX_Results) must exist\n"
+        )
 
     def accept(self):
         FreeCADGui.Control.closeDialog()
