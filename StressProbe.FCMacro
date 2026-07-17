@@ -158,6 +158,12 @@ class StressProbeTaskPanel:
         self.btn_remove.clicked.connect(self.do_remove)
         btn_layout.addWidget(self.btn_remove)
 
+        self.btn_help = QtWidgets.QPushButton("?")
+        self.btn_help.setStyleSheet("padding: 10px; font-size: 14px; font-weight: bold;")
+        self.btn_help.setFixedWidth(40)
+        self.btn_help.clicked.connect(self.do_help)
+        btn_layout.addWidget(self.btn_help)
+
         layout.addLayout(btn_layout)
 
     def do_probe(self):
@@ -291,6 +297,35 @@ class StressProbeTaskPanel:
         self.status.setText("Removed {} marker(s)".format(total))
         self.status.setStyleSheet("color: gray; font-weight: bold;")
         self.result_text.clear()
+
+    def do_help(self):
+        QtWidgets.QMessageBox.information(self.form, "Stress Probe Help",
+            "STRESS PROBE MACRO\n\n"
+            "HOW TO USE:\n"
+            "  1. Run: Macro > Macros > StressProbe > Run\n"
+            "  2. Select a vertex, edge, or face on the model\n"
+            "  3. Set Label Offset X/Y/Z if needed\n"
+            "  4. Click 'Probe'\n"
+            "  5. Repeat from step 2 for another point\n\n"
+            "WHAT IT SHOWS:\n"
+            "  - Green sphere: probed point with full stress values\n"
+            "  - Max/Min vonMises markers on the body\n"
+            "  - Max/Min Displacement markers on the body\n"
+            "  - All values displayed in the panel text area\n\n"
+            "LABEL OFFSET:\n"
+            "  Adjust X, Y, Z spin boxes before probing to\n"
+            "  change where the text labels appear relative\n"
+            "  to the probe point.\n\n"
+            "AFTER CLOSING:\n"
+            "  - Labels and markers remain in the 'StressProbe' group\n"
+            "  - To move a label: select it > right-click > Transform\n"
+            "    or press V then M, then drag the arrows\n"
+            "  - Or edit Placement > Position in the Property panel\n"
+            "  - To delete: expand StressProbe group > delete objects,\n"
+            "    or re-run macro and click 'Remove All'\n\n"
+            "REQUIREMENTS:\n"
+            "  - FEM analysis with results (CCX_Results) must exist\n"
+        )
 
     def accept(self):
         FreeCADGui.Control.closeDialog()
