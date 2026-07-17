@@ -1,0 +1,10 @@
+import FreeCADGui
+
+# Get the active 3D view
+view = FreeCADGui.ActiveDocument.ActiveView
+
+# Set isometric view
+view.viewIsometric()
+
+# Fit all objects to the screen
+view.fitAll()
