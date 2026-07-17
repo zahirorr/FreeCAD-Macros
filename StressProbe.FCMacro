@@ -166,6 +166,15 @@ class StressProbeTaskPanel:
 
         layout.addLayout(btn_layout)
 
+        btn_layout2 = QtWidgets.QHBoxLayout()
+
+        self.btn_export = QtWidgets.QPushButton("Export TXT")
+        self.btn_export.setStyleSheet("padding: 8px; font-size: 12px;")
+        self.btn_export.clicked.connect(self.do_export)
+        btn_layout2.addWidget(self.btn_export)
+
+        layout.addLayout(btn_layout2)
+
     def do_probe(self):
         doc = FreeCAD.ActiveDocument
         if doc is None:
@@ -316,6 +325,9 @@ class StressProbeTaskPanel:
             "  Adjust X, Y, Z spin boxes before probing to\n"
             "  change where the text labels appear relative\n"
             "  to the probe point.\n\n"
+            "EXPORT TXT:\n"
+            "  Click 'Export TXT' to save the current results\n"
+            "  to a .txt file and attach it to the document.\n\n"
             "AFTER CLOSING:\n"
             "  - Labels and markers remain in the 'StressProbe' group\n"
             "  - To move a label: select it > right-click > Transform\n"
@@ -326,6 +338,30 @@ class StressProbeTaskPanel:
             "REQUIREMENTS:\n"
             "  - FEM analysis with results (CCX_Results) must exist\n"
         )
+
+    def do_export(self):
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            self.status.setText("No active document")
+            self.status.setStyleSheet("color: red; font-weight: bold;")
+            return
+
+        text = self.result_text.toPlainText()
+        if not text.strip():
+            self.status.setText("No results to export. Probe first.")
+            self.status.setStyleSheet("color: orange; font-weight: bold;")
+            return
+
+        old = doc.getObject(PREFIX + "Results")
+        if old:
+            doc.removeObject(old.Name)
+
+        obj = doc.addObject("App::TextDocument", PREFIX + "Results")
+        obj.Text = text
+
+        doc.recompute()
+        self.status.setText("Results saved as Text Document")
+        self.status.setStyleSheet("color: green; font-weight: bold;")
 
     def accept(self):
         FreeCADGui.Control.closeDialog()
