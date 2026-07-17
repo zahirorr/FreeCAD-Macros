@@ -196,17 +196,22 @@ def cleanup():
     doc = FreeCAD.ActiveDocument
     if doc is None:
         return 0
-    grp = doc.getObject(GROUP_NAME)
     count = 0
+    grp = doc.getObject(GROUP_NAME)
     if grp:
         names = [o.Name for o in grp.Group]
         for name in names:
             doc.removeObject(name)
         count = len(names)
         doc.removeObject(GROUP_NAME)
+    condition_names = set()
+    for obj in doc.Objects:
+        if obj.TypeId == "App::DocumentObjectGroup" and obj.Name.startswith(PREFIX + "Condition"):
+            for child in obj.Group:
+                condition_names.add(child.Name)
     to_remove = [o.Name for o in doc.Objects
                  if o.Name.startswith(PREFIX)
-                 and not o.Name.startswith(PREFIX + "Condition")
+                 and o.Name not in condition_names
                  and not (o.TypeId == "App::DocumentObjectGroup" and o.Name.startswith(PREFIX + "Condition"))]
     for name in to_remove:
         doc.removeObject(name)
@@ -220,9 +225,14 @@ def cleanup_old():
     doc = FreeCAD.ActiveDocument
     if doc is None:
         return 0
+    condition_names = set()
+    for obj in doc.Objects:
+        if obj.TypeId == "App::DocumentObjectGroup" and "Condition" in obj.Name:
+            for child in obj.Group:
+                condition_names.add(child.Name)
     to_remove = [o.Name for o in doc.Objects
                  if (o.Name.startswith("StressProbe") or o.Name.startswith("StressLeader"))
-                 and not o.Name.startswith(PREFIX + "Condition")
+                 and o.Name not in condition_names
                  and not (o.TypeId == "App::DocumentObjectGroup" and "Condition" in o.Name)]
     for name in to_remove:
         doc.removeObject(name)
@@ -580,16 +590,27 @@ class StressProbeTaskPanel:
         txt_obj.Text = full_text
         grp.addObject(txt_obj)
 
+        live_grp = doc.getObject(GROUP_NAME)
+        if live_grp:
+            for obj in list(live_grp.Group):
+                grp.addObject(obj)
+            doc.removeObject(live_grp.Name)
+
         for obj in list(doc.Objects):
-            if obj.Name.startswith(PREFIX):
-                if obj.Name.startswith(PREFIX + "Condition") or obj == grp or obj == txt_obj:
-                    continue
+            if obj.Name.startswith(PREFIX) and obj != grp and obj != txt_obj:
                 if obj.TypeId == "App::DocumentObjectGroup" and obj.Name.startswith(PREFIX + "Condition"):
                     continue
-                try:
-                    grp.addObject(obj)
-                except Exception:
-                    pass
+                in_condition = False
+                for cg in doc.Objects:
+                    if cg.TypeId == "App::DocumentObjectGroup" and cg.Name.startswith(PREFIX + "Condition"):
+                        if obj in cg.Group:
+                            in_condition = True
+                            break
+                if not in_condition:
+                    try:
+                        grp.addObject(obj)
+                    except Exception:
+                        pass
 
         doc.recompute()
         self.status.setText("Exported as {}".format(cond_label))
