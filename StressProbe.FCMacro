@@ -94,25 +94,40 @@ def get_or_create_group():
     return grp
 
 
-def make_marker(point, label, size=0.4):
+def make_marker(point, label, size=0.4, color=None):
     doc = FreeCAD.ActiveDocument
     sphere = doc.addObject("Part::Sphere", label)
     sphere.Radius = size
     sphere.Placement.Base = point
+    if color is not None:
+        try:
+            sphere.ViewObject.ShapeColor = color
+        except Exception:
+            pass
     grp = get_or_create_group()
     grp.addObject(sphere)
     return sphere
 
 
-def make_text_label(point, lines, label):
+def make_text_label(point, lines, label, color=None, offset=(2.0, 1.5, 0.0)):
     doc = FreeCAD.ActiveDocument
-    text_point = FreeCAD.Vector(point.x + 2.0, point.y + 1.5, point.z)
+    text_point = FreeCAD.Vector(point.x + offset[0], point.y + offset[1], point.z + offset[2])
     pl = FreeCAD.Placement()
     pl.Base = text_point
     txt = Draft.make_text(lines, placement=pl, screen=False, height=3.0)
     txt.Label = label
+    if color is not None:
+        try:
+            txt.ViewObject.TextColor = color
+        except Exception:
+            pass
     leader = doc.addObject("Part::Feature", label + "_leader")
     leader.Shape = Part.makeLine(point, text_point)
+    if color is not None:
+        try:
+            leader.ViewObject.LineColor = color
+        except Exception:
+            pass
     grp = get_or_create_group()
     grp.addObject(txt)
     grp.addObject(leader)
@@ -175,6 +190,32 @@ class StressProbeTaskPanel:
 
         layout.addLayout(btn_layout2)
 
+        offset_group = QtWidgets.QGroupBox("Label Offset")
+        offset_layout = QtWidgets.QHBoxLayout(offset_group)
+
+        self.spin_x = QtWidgets.QDoubleSpinBox()
+        self.spin_x.setRange(-100.0, 100.0)
+        self.spin_x.setValue(2.0)
+        self.spin_x.setSingleStep(0.5)
+        self.spin_x.setSuffix(" X")
+        offset_layout.addWidget(self.spin_x)
+
+        self.spin_y = QtWidgets.QDoubleSpinBox()
+        self.spin_y.setRange(-100.0, 100.0)
+        self.spin_y.setValue(1.5)
+        self.spin_y.setSingleStep(0.5)
+        self.spin_y.setSuffix(" Y")
+        offset_layout.addWidget(self.spin_y)
+
+        self.spin_z = QtWidgets.QDoubleSpinBox()
+        self.spin_z.setRange(-100.0, 100.0)
+        self.spin_z.setValue(0.0)
+        self.spin_z.setSingleStep(0.5)
+        self.spin_z.setSuffix(" Z")
+        offset_layout.addWidget(self.spin_z)
+
+        layout.addWidget(offset_group)
+
     def do_probe(self):
         doc = FreeCAD.ActiveDocument
         if doc is None:
@@ -224,7 +265,12 @@ class StressProbeTaskPanel:
         cleanup()
         cleanup_old()
 
-        make_marker(coord, PREFIX + "Probe")
+        offset = (self.spin_x.value(), self.spin_y.value(), self.spin_z.value())
+        green = (0.0, 0.7, 0.0, 1.0)
+        red = (1.0, 0.0, 0.0, 1.0)
+        blue = (0.0, 0.0, 1.0, 1.0)
+
+        make_marker(coord, PREFIX + "Probe", color=green)
         make_text_label(coord, [
             "Node {}".format(nearest_id),
             "vonMises: {:.3f} MPa".format(vm),
@@ -232,36 +278,36 @@ class StressProbeTaskPanel:
             "Sig3: {:.3f} MPa".format(smin),
             "MaxShear: {:.3f} MPa".format(mshear),
             "Disp: {:.6f} mm".format(disp),
-        ], PREFIX + "ProbeText")
+        ], PREFIX + "ProbeText", color=green, offset=offset)
 
         max_vm_coord = nodes[node_numbers[max_vm_idx]]
-        make_marker(max_vm_coord, PREFIX + "MaxVM")
+        make_marker(max_vm_coord, PREFIX + "MaxVM", color=red)
         make_text_label(max_vm_coord, [
             "MAX vonMises {:.3f} MPa".format(max(vm_arr)),
             "Node {}".format(node_numbers[max_vm_idx]),
-        ], PREFIX + "MaxVMText")
+        ], PREFIX + "MaxVMText", color=red, offset=offset)
 
         min_vm_coord = nodes[node_numbers[min_vm_idx]]
-        make_marker(min_vm_coord, PREFIX + "MinVM")
+        make_marker(min_vm_coord, PREFIX + "MinVM", color=blue)
         make_text_label(min_vm_coord, [
             "MIN vonMises {:.3f} MPa".format(min(vm_arr)),
             "Node {}".format(node_numbers[min_vm_idx]),
-        ], PREFIX + "MinVMText")
+        ], PREFIX + "MinVMText", color=blue, offset=offset)
 
         max_disp_coord = nodes[node_numbers[max_disp_idx]]
-        make_marker(max_disp_coord, PREFIX + "MaxDisp")
+        make_marker(max_disp_coord, PREFIX + "MaxDisp", color=red)
         make_text_label(max_disp_coord, [
             "MAX Disp {:.6f} mm".format(max(disp_arr)),
             "Node {}".format(node_numbers[max_disp_idx]),
-        ], PREFIX + "MaxDispText")
+        ], PREFIX + "MaxDispText", color=red, offset=offset)
 
         min_disp_idx = disp_arr.index(min(disp_arr))
         min_disp_coord = nodes[node_numbers[min_disp_idx]]
-        make_marker(min_disp_coord, PREFIX + "MinDisp")
+        make_marker(min_disp_coord, PREFIX + "MinDisp", color=blue)
         make_text_label(min_disp_coord, [
             "MIN Disp {:.6f} mm".format(min(disp_arr)),
             "Node {}".format(node_numbers[min_disp_idx]),
-        ], PREFIX + "MinDispText")
+        ], PREFIX + "MinDispText", color=blue, offset=offset)
 
         doc.recompute()
 
@@ -372,4 +418,8 @@ class StressProbeTaskPanel:
 
 cleanup_old()
 cleanup()
+try:
+    FreeCADGui.Control.closeDialog()
+except Exception:
+    pass
 FreeCADGui.Control.showDialog(StressProbeTaskPanel())
