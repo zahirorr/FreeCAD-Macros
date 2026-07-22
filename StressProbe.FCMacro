@@ -2,6 +2,8 @@ import FreeCAD
 import FreeCADGui
 import Part
 import Draft
+import os
+import re
 from PySide6 import QtWidgets
 
 
@@ -61,6 +63,57 @@ def get_fem_analysis():
         if obj.TypeId in ("Fem::AnalysisPython", "Fem::Analysis"):
             return obj
     return None
+
+
+def get_reaction_forces():
+    temp = os.path.expandvars(r"%TEMP%")
+    dirs = sorted(
+        [d for d in os.listdir(temp) if d.startswith("fcfem_")],
+        key=lambda d: os.path.getmtime(os.path.join(temp, d)),
+        reverse=True
+    )
+    if not dirs:
+        return None
+
+    dat_path = os.path.join(temp, dirs[0], "FEMMeshNetgen.dat")
+    if not os.path.exists(dat_path):
+        return None
+
+    with open(dat_path, "r") as f:
+        text = f.read()
+
+    pattern = r'total force \(fx,fy,fz\) for set (\S+) and time\s+([\d.E+-]+)\s*\n\s+([-\d.E+]+)\s+([-\d.E+]+)\s+([-\d.E+]+)'
+    matches = re.findall(pattern, text)
+
+    results = []
+    for setName, time_val, fx_str, fy_str, fz_str in matches:
+        fx = float(fx_str)
+        fy = float(fy_str)
+        fz = float(fz_str)
+        total = (fx**2 + fy**2 + fz**2)**0.5
+        results.append({
+            "set": setName,
+            "time": float(time_val),
+            "fx": fx,
+            "fy": fy,
+            "fz": fz,
+            "total": total,
+        })
+    return results
+
+
+def get_reaction_forces_text():
+    rf_data = get_reaction_forces()
+    if not rf_data:
+        return "\n=== REACTION FORCES ===\n  No reaction force data found.\n"
+
+    lines = ["\n=== REACTION FORCES ==="]
+    lines.append("  {:<12s} {:>12s} {:>12s} {:>12s} {:>12s}".format(
+        "Constraint", "Fx (N)", "Fy (N)", "Fz (N)", "Total (N)"))
+    for rf in rf_data:
+        lines.append("  {:<12s} {:>12.2f} {:>12.2f} {:>12.2f} {:>12.2f}".format(
+            rf["set"], rf["fx"], rf["fy"], rf["fz"], rf["total"]))
+    return "\n".join(lines) + "\n"
 
 
 def get_conditions_text():
@@ -366,13 +419,15 @@ def _run_probe():
         "  Max Shear:  {:>10.4f} MPa  {:>10.4f} MPa\n"
         "  Disp:       {:>10.6f} mm   {:>10.6f} mm\n"
         "\n"
-        "  Total nodes: {}".format(
+        "  Total nodes: {}"
+        "{}\n".format(
             max(vm_arr), min(vm_arr),
             max(smax_arr), min(smax_arr),
             max(smin_arr), min(smin_arr),
             max(mshear_arr), min(mshear_arr),
             max(disp_arr), min(disp_arr),
             len(node_numbers),
+            get_reaction_forces_text(),
         )
     )
 
